@@ -1,17 +1,162 @@
-use espeaker;
+use espeakng_sys::*;
+use lazy_static::lazy_static;
+use speechprovider::*;
+use std::collections::HashSet;
+use std::ffi::{c_void, CStr, CString};
 use std::future::pending;
+use std::os::fd::IntoRawFd;
+use std::os::raw::{c_int, c_short};
+use std::ptr::{addr_of_mut, null, null_mut};
+use std::sync::{Mutex, MutexGuard};
 use std::thread;
 use zbus::{dbus_interface, ConnectionBuilder, MessageHeader, Result, SignalContext};
 use zvariant::OwnedFd;
-use std::os::fd::IntoRawFd;
-use speechprovider::*;
 
 const NORMAL_RATE: f32 = 175.0;
 
-pub struct Voice {
-    pub name: String,
-    pub identifier: String,
-    pub languages: Vec<String>,
+lazy_static! {
+    static ref ESPEAK_INIT: Mutex<u32> = Mutex::new(0);
+}
+
+fn init() -> u32 {
+    let mut lock = ESPEAK_INIT.plock();
+    if *lock == 0 {
+        *lock = unsafe {
+            espeak_Initialize(
+                espeak_AUDIO_OUTPUT_AUDIO_OUTPUT_SYNCHRONOUS,
+                0,
+                std::ptr::null(),
+                0,
+            )
+            .try_into()
+            .unwrap()
+        };
+    }
+    *lock
+}
+
+trait PoisonlessLock<T> {
+    fn plock(&self) -> MutexGuard<T>;
+}
+
+impl<T> PoisonlessLock<T> for Mutex<T> {
+    fn plock(&self) -> MutexGuard<T> {
+        match self.lock() {
+            Ok(l) => l,
+            Err(e) => e.into_inner(),
+        }
+    }
+}
+
+fn empty_voice() -> espeak_VOICE {
+    espeak_VOICE {
+        name: null(),
+        languages: null(),
+        identifier: null(),
+        gender: 0,
+        age: 0,
+        variant: 0,
+        xx1: 0,
+        score: 0,
+        spare: null_mut(),
+    }
+}
+
+struct StreamWriterWrapper {
+    stream_writer: StreamWriter,
+    bytes_sent: usize,
+}
+
+impl StreamWriterWrapper {
+    fn new(fd: OwnedFd) -> StreamWriterWrapper {
+        let stream_writer = StreamWriter::new(fd.into_raw_fd());
+        stream_writer.send_stream_header();
+        StreamWriterWrapper {
+            stream_writer,
+            bytes_sent: 0,
+        }
+    }
+
+    fn from_ptr(ptr: *mut c_void) -> &'static mut Self {
+        unsafe { &mut *(ptr as *mut Self) }
+    }
+
+    fn to_ptr(&mut self) -> *mut c_void {
+        self as *mut _ as *mut c_void
+    }
+
+    fn send_audio(&mut self, chunk: &[u8]) {
+        self.bytes_sent += chunk.len();
+        self.stream_writer.send_audio(chunk);
+    }
+
+    pub fn send_event(
+        &self,
+        event_type: EventType,
+        range_start: u32,
+        range_end: u32,
+        mark_name: &str,
+    ) {
+        self.stream_writer
+            .send_event(event_type, range_start, range_end, mark_name);
+    }
+}
+
+#[allow(non_upper_case_globals)]
+extern "C" fn synth_callback(
+    wav: *mut c_short,
+    sample_count: c_int,
+    events: *mut espeak_EVENT,
+) -> c_int {
+    let stream_writer = StreamWriterWrapper::from_ptr(unsafe { (*events).user_data });
+    let wav_slice: &[u8] =
+        unsafe { std::slice::from_raw_parts(wav as *const u8, (sample_count * 2) as usize) };
+    let mut bytes_sent: usize = 0;
+
+    let mut events_copy = events.clone();
+    let sample_rate = unsafe { espeak_ng_GetSampleRate() } as u32;
+    while unsafe { (*events_copy).type_ != espeak_EVENT_TYPE_espeakEVENT_LIST_TERMINATED } {
+        let text_position: usize = unsafe { (*events_copy).text_position.try_into().unwrap() };
+        let length: usize = unsafe { (*events_copy).length.try_into().unwrap() };
+
+        let evt = match unsafe { (*events_copy).type_ } {
+            espeak_EVENT_TYPE_espeakEVENT_WORD => {
+                Some((EventType::Word, text_position, text_position + length))
+            }
+            espeak_EVENT_TYPE_espeakEVENT_SENTENCE => {
+                Some((EventType::Sentence, text_position, text_position + length))
+            }
+            _ => None,
+        };
+
+        if let Some((evt_type, start, end)) = evt {
+            let audio_position: u32 = unsafe { (*events_copy).audio_position.try_into().unwrap() };
+            let mut at_byte: usize = (audio_position * sample_rate / 1000 * 2)
+                .try_into()
+                .unwrap();
+            at_byte = at_byte.saturating_sub(stream_writer.bytes_sent);
+
+            let wav_slice_to_send = &wav_slice[bytes_sent..at_byte];
+            if !wav_slice_to_send.is_empty() {
+                stream_writer.send_audio(wav_slice_to_send);
+                bytes_sent = at_byte;
+            }
+            stream_writer.send_event(
+                evt_type,
+                start.saturating_sub(1) as u32,
+                end.saturating_sub(1) as u32,
+                "",
+            );
+        }
+
+        events_copy = events_copy.wrapping_add(1);
+    }
+
+    let wav_slice_to_send = &wav_slice[bytes_sent..];
+    if !wav_slice_to_send.is_empty() {
+        stream_writer.send_audio(wav_slice_to_send);
+    }
+    return 0;
 }
 
 struct Speaker {}
@@ -31,29 +176,66 @@ impl Speaker {
 
     #[dbus_interface(property)]
     async fn voices(&self) -> Vec<(String, String, String, u64, Vec<String>)> {
-        let features = VoiceFeature::EVENTS_WORD |
-            VoiceFeature::EVENTS_SENTENCE |
-            VoiceFeature::EVENTS_SSML_MARK |
-            VoiceFeature::SSML_SAY_AS_TELEPHONE |
-            VoiceFeature::SSML_SAY_AS_CHARACTERS |
-            VoiceFeature::SSML_SAY_AS_CHARACTERS_GLYPHS |
-            VoiceFeature::SSML_BREAK |
-            VoiceFeature::SSML_SUB |
-            VoiceFeature::SSML_EMPHASIS |
-            VoiceFeature::SSML_PROSODY |
-            VoiceFeature::SSML_SENTENCE_PARAGRAPH;
-        espeaker::list_voices()
-            .into_iter()
-            .map(|v| {
-                (
-                    v.name,
-                    v.identifier,
-                    "audio/x-spiel,format=S16LE,channels=1,rate=22050".to_string(),
+        init();
+        let _lock = ESPEAK_INIT.plock();
+        let mut langs_hash = HashSet::new();
+        let mut voice_arr = unsafe { espeak_ListVoices(null_mut()) };
+        while unsafe { !(*voice_arr).is_null() } {
+            let voice = unsafe { **voice_arr };
+            if !voice.languages.is_null() {
+                let mut langs_ptr = voice.languages;
+                while unsafe { *langs_ptr != 0 } {
+                    // skip priority byte
+                    langs_ptr = langs_ptr.wrapping_add(1);
+                    let lang_cstr = unsafe { CStr::from_ptr(langs_ptr) };
+                    let name = String::from(lang_cstr.to_str().unwrap());
+                    langs_ptr = langs_ptr.wrapping_add(name.bytes().count() + 1);
+                    langs_hash.insert(name);
+                }
+            }
+            voice_arr = voice_arr.wrapping_add(1);
+        }
+        let mut langs = langs_hash.into_iter().collect::<Vec<String>>();
+        langs.sort();
+
+        let features = VoiceFeature::EVENTS_WORD
+            | VoiceFeature::EVENTS_SENTENCE
+            | VoiceFeature::EVENTS_SSML_MARK
+            | VoiceFeature::SSML_SAY_AS_TELEPHONE
+            | VoiceFeature::SSML_SAY_AS_CHARACTERS
+            | VoiceFeature::SSML_SAY_AS_CHARACTERS_GLYPHS
+            | VoiceFeature::SSML_BREAK
+            | VoiceFeature::SSML_SUB
+            | VoiceFeature::SSML_EMPHASIS
+            | VoiceFeature::SSML_PROSODY
+            | VoiceFeature::SSML_SENTENCE_PARAGRAPH;
+
+        let mut voice = empty_voice();
+        let c_lang = CString::new("variant").unwrap();
+        voice.languages = c_lang.as_ptr();
+
+        let sample_rate = unsafe { espeak_ng_GetSampleRate() } as u32;
+        let mut voices = Vec::new();
+        voice_arr = unsafe { espeak_ListVoices(addr_of_mut!(voice)) };
+        while unsafe { !(*voice_arr).is_null() } {
+            let voice = unsafe { **voice_arr };
+            if !voice.name.is_null() && !voice.identifier.is_null() {
+                let name_cstr = unsafe { CStr::from_ptr(voice.name) };
+                let id_cstr = unsafe { CStr::from_ptr(voice.identifier) };
+                let audio_format =
+                    format!("audio/x-spiel,format=S16LE,channels=1,rate={sample_rate}");
+                voices.push((
+                    String::from(name_cstr.to_str().unwrap()),
+                    String::from(id_cstr.to_str().unwrap().trim_start_matches("!v/")),
+                    audio_format,
                     features.bits() as u64,
-                    v.languages.into_iter().map(|l| l.name).collect(),
-                )
-            })
-            .collect()
+                    langs.clone(),
+                ));
+            }
+            voice_arr = voice_arr.wrapping_add(1);
+        }
+
+        voices
     }
 
     async fn synthesize(
@@ -64,59 +246,59 @@ impl Speaker {
         pitch: f32,
         rate: f32,
         is_ssml: bool,
-        _language: &str,
+        language: &str,
         #[zbus(header)] _header: MessageHeader<'_>,
         #[zbus(signal_context)] _ctxt: SignalContext<'_>,
     ) {
-        let s = String::from(utterance);
-    
-        let voice = espeaker::list_voices()
-        .into_iter()
-        .find(|v| v.identifier == voice_id)
-        .unwrap();
+        let utterance_cstr = CString::new(utterance).unwrap();
 
+        let voice_name = if language.is_empty() {
+            let default_voice_utf8 = &ESPEAKNG_DEFAULT_VOICE[..ESPEAKNG_DEFAULT_VOICE.len() - 1];
+            std::str::from_utf8(default_voice_utf8).unwrap()
+        } else {
+            language
+        };
+
+        let lang_and_id = format!("{voice_name}+{voice_id}");
         thread::spawn(move || {
-            let mut espeaker = espeaker::Speaker::new();                
-            espeaker.set_voice(&voice);
-            espeaker.params.pitch = Some((pitch * 50.0).round() as i32);
-            espeaker.params.rate = Some((rate * NORMAL_RATE).round() as i32);
-            espeaker.params.is_ssml = is_ssml;
+            let position = 0u32;
+            let position_type: espeak_POSITION_TYPE = 0;
+            let end_position = 0u32;
+            let flags = if is_ssml {
+                espeakSSML | espeakCHARS_AUTO
+            } else {
+                espeakCHARS_AUTO
+            };
+            let mut stream_writer = StreamWriterWrapper::new(fd);
+            let stream_writer_ptr = stream_writer.to_ptr();
 
-            let raw_fd = fd.into_raw_fd();
-            // let mut f = File::from(owned_fd);
-            let source = espeaker.speak(&s);
-            let stream_writer = StreamWriter::new(raw_fd);
-            stream_writer.send_stream_header();
-            let mut buffer = [0u8; 2048];
-            let mut index = 0;
-            for (sample, events) in source.iter_audio_and_events() {
-                match events {
-                    None => (),
-                    Some(events) => {
-                        for evt in events {
-                            match evt {
-                                espeaker::Event::Start => (),
-                                espeaker::Event::Word(start, len) => {
-                                    stream_writer.send_event(EventType::Word, start as u32, (start + len) as u32, "");
-                                },
-                                espeaker::Event::Sentence(_) => (),
-                                espeaker::Event::End => ()
-                            }
-                        }
-                        if index > 0 {
-                            stream_writer.send_audio(&buffer[..index-2]);
-                        }
-                        index = 0;
-                    }
-                }
-                [buffer[index], buffer[index+1]] = sample.to_le_bytes();
-                index += 2;
-                if index >= 2048 {
-                    stream_writer.send_audio(&buffer);
-                    index = 0;
-                }
+            let c_lang = CString::new(lang_and_id).unwrap();
+
+            unsafe {
+                let _lock = ESPEAK_INIT.plock();
+                espeak_SetSynthCallback(Some(synth_callback));
+                espeak_SetVoiceByName(c_lang.as_ptr());
+                espeak_SetParameter(
+                    espeak_PARAMETER_espeakPITCH,
+                    (pitch * 50.0).round() as i32,
+                    0,
+                );
+                espeak_SetParameter(
+                    espeak_PARAMETER_espeakRATE,
+                    (rate * NORMAL_RATE).round() as i32,
+                    0,
+                );
+                espeak_Synth(
+                    utterance_cstr.as_ptr() as *const c_void,
+                    500,
+                    position,
+                    position_type,
+                    end_position,
+                    flags,
+                    null_mut(),
+                    stream_writer_ptr,
+                );
             }
-            stream_writer.send_audio(&buffer[..index-2]);
         });
     }
 }
