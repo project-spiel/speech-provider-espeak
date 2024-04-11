@@ -46,7 +46,6 @@ jobs:
             build-aux/org.espeak.Speech.Provider.json
           arch: x86_64
           gpg-sign: ${{ steps.gpg.outputs.fingerprint }}
-          upload-bundles: true
 
       - name: Setup Flatpak
         run: |
@@ -62,10 +61,7 @@ jobs:
           arch: x86_64
           flatpak-builder-args: |
             --install-deps-from=espeak-repo
-          flatpak-build-bundle-args: |
-            --runtime
           gpg-sign: ${{ steps.gpg.outputs.fingerprint }}
-          upload-bundles: true
 
       - name: Deploy
         uses: JamesIves/github-pages-deploy-action@releases/v4
