@@ -1,2 +1,4 @@
 target
 subprojects/libspeechprovider/
+.flatpak-builder
+repo

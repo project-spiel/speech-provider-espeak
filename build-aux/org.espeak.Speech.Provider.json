@@ -16,6 +16,15 @@
       "CARGO_HOME": "/run/build/speech-provider-espeak/cargo"
     }
   },
+  "add-extensions": {
+    "org.espeak.Speech.Provider.Voice": {
+        "merge-dirs": "voices",
+        "directory": "extensions",
+        "autodelete": true,
+        "subdirectories": true,
+        "no-autodownload": true
+    }
+  },
   "modules": [
     {
       "name": "espeak-ng",
@@ -40,7 +49,10 @@
       ],
       "post-install": [
         "ln -s /app/lib/libespeak-ng.so /app/lib/libespeak.so",
-        "ln -s /app/lib/libespeak-ng.a /app/lib/libespeak.a"
+        "ln -s /app/lib/libespeak-ng.a /app/lib/libespeak.a",
+        "rm -rf /app/share/espeak-ng-data/voices/\\!v*",
+        "install -d ${FLATPAK_DEST}/extensions/voices",
+        "ln -s ${FLATPAK_DEST}/extensions/voices /app/share/espeak-ng-data/voices/\\!v"
       ]
     },
     {
