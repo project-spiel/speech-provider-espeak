@@ -24,7 +24,7 @@ MANIFEST_TEMPLATE = '''{{
           "commit": "34762a2b9621d3643e67a00642984c21f0626bdc",
           "x-checker-data": {{
             "type": "git",
-            "tag-pattern": "^([\\d.]+)$"
+            "tag-pattern": "^([\\\\d.]+)$"
           }}
         }}
       ]
