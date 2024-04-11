@@ -28,7 +28,7 @@ endif
 
 custom_target('speech-provider-espeak',
               build_by_default: true,
-              input: [sources],
+              input: [sources, meson.project_source_root() / 'Cargo.toml'],
               output: app_name,
               depends: espeak_provider_depends,
               env: espeak_provider_env,

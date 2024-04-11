@@ -1,4 +1,6 @@
+use async_io::block_on;
 use espeakng_sys::*;
+use inotify::{Inotify, WatchMask};
 use lazy_static::lazy_static;
 use speechprovider::*;
 use std::collections::HashSet;
@@ -9,7 +11,7 @@ use std::os::raw::{c_int, c_short};
 use std::ptr::{addr_of_mut, null, null_mut};
 use std::sync::{Mutex, MutexGuard};
 use std::thread;
-use zbus::{dbus_interface, ConnectionBuilder, MessageHeader, Result, SignalContext};
+use zbus::{dbus_interface, Connection, ConnectionBuilder, MessageHeader, Result, SignalContext};
 use zvariant::OwnedFd;
 
 const NORMAL_RATE: f32 = 175.0;
@@ -18,21 +20,57 @@ lazy_static! {
     static ref ESPEAK_INIT: Mutex<u32> = Mutex::new(0);
 }
 
-fn init() -> u32 {
-    let mut lock = ESPEAK_INIT.plock();
-    if *lock == 0 {
-        *lock = unsafe {
-            espeak_Initialize(
-                espeak_AUDIO_OUTPUT_AUDIO_OUTPUT_SYNCHRONOUS,
-                0,
-                std::ptr::null(),
-                0,
-            )
-            .try_into()
-            .unwrap()
-        };
+fn get_voices_path() -> std::path::PathBuf {
+    let mut c_voice_path: *const libc::c_char = std::ptr::null();
+
+    unsafe {
+        espeak_Info(std::ptr::addr_of_mut!(c_voice_path));
     }
-    *lock
+
+    let cstr = unsafe { CStr::from_ptr(c_voice_path) };
+    let path_str = String::from(cstr.to_str().unwrap());
+    let mut voices_path = std::path::PathBuf::from(path_str);
+    voices_path.push("voices");
+    voices_path.push("!v");
+    voices_path
+}
+
+async fn observe_voices_changed(conn: Connection) {
+    let object_server = conn.object_server();
+    let speaker_iface_ref = object_server
+        .interface::<_, Speaker>("/org/espeak/Speech/Provider")
+        .await
+        .unwrap();
+
+    thread::spawn(move || {
+        let voices_path = get_voices_path();
+        let mut inotify = Inotify::init().expect("Error while initializing inotify instance");
+
+        // Watch for modify and close events.
+        inotify
+            .watches()
+            .add(
+                voices_path,
+                WatchMask::CREATE | WatchMask::DELETE | WatchMask::MOVED_FROM | WatchMask::MOVED_TO,
+            )
+            .expect("Failed to add file watch");
+
+        let mut buffer = [0; 1024];
+
+        loop {
+            inotify
+                .read_events_blocking(&mut buffer)
+                .expect("Error while reading events");
+
+            block_on(async {
+                let speaker_iface = speaker_iface_ref.get_mut().await;
+                speaker_iface
+                    .voices_changed(speaker_iface_ref.signal_context())
+                    .await
+            })
+            .unwrap();
+        }
+    });
 }
 
 trait PoisonlessLock<T> {
@@ -163,12 +201,26 @@ struct Speaker {}
 
 impl Speaker {
     fn new() -> Speaker {
-        Speaker {}
+        let speaker = Speaker {};
+        speaker.init();
+        speaker
     }
 }
 
 #[dbus_interface(name = "org.freedesktop.Speech.Provider")]
 impl Speaker {
+    fn init(&self) {
+        let _lock = ESPEAK_INIT.plock();
+        unsafe {
+            espeak_Initialize(
+                espeak_AUDIO_OUTPUT_AUDIO_OUTPUT_SYNCHRONOUS,
+                0,
+                std::ptr::null(),
+                0,
+            );
+        };
+    }
+
     #[dbus_interface(property)]
     async fn name(&self) -> String {
         "eSpeak NG".to_string()
@@ -176,7 +228,6 @@ impl Speaker {
 
     #[dbus_interface(property)]
     async fn voices(&self) -> Vec<(String, String, String, u64, Vec<String>)> {
-        init();
         let _lock = ESPEAK_INIT.plock();
         let mut langs_hash = HashSet::new();
         let mut voice_arr = unsafe { espeak_ListVoices(null_mut()) };
@@ -306,13 +357,14 @@ impl Speaker {
 // Although we use `async-std` here, you can use any async runtime of choice.
 #[async_std::main]
 async fn main() -> Result<()> {
-    let _conn = ConnectionBuilder::session()?
+    let conn = ConnectionBuilder::session()?
         .name("org.espeak.Speech.Provider")?
         .serve_at("/org/espeak/Speech/Provider", Speaker::new())?
         .build()
         .await?;
 
-    // Do other things or go to wait forever
+    observe_voices_changed(conn).await;
+
     pending::<()>().await;
 
     Ok(())
