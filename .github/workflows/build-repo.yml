@@ -50,7 +50,7 @@ jobs:
 
       - name: Setup Flatpak
         run: |
-          flatpak remote-add --if-not-exists \
+          flatpak remote-add --no-gpg-verify --if-not-exists \
                   espeak-repo ${{steps.build.outputs.repository}}
 
       - name: Build Extensions
