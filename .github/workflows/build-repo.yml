@@ -38,7 +38,7 @@ jobs:
       - name: Install org.freedesktop.Sdk.Extension.rust-stable
         run: flatpak install --noninteractive flathub org.freedesktop.Sdk.Extension.rust-stable//23.08
 
-      - name: Build
+      - name: Build Core App
         id: build
         uses: andyholmes/flatter@main
         with:
@@ -48,9 +48,29 @@ jobs:
           gpg-sign: ${{ steps.gpg.outputs.fingerprint }}
           upload-bundles: true
 
+      - name: Setup Flatpak
+        run: |
+          flatpak remote-add --if-not-exists \
+                  espeak-repo ${{steps.build.outputs.repository}}
+
+      - name: Build Extensions
+        id: build-ext
+        uses: andyholmes/flatter@main
+        with:
+          files: |
+            build-aux/voices/org.espeak.Speech.Provider.Voice.Alex.json
+          arch: x86_64
+          flatpak-builder-args: |
+            --install-deps-from=espeak-repo
+          flatpak-build-bundle-args: |
+            --runtime
+          gpg-sign: ${{ steps.gpg.outputs.fingerprint }}
+          upload-bundles: true
+
       - name: Deploy
         uses: JamesIves/github-pages-deploy-action@releases/v4
         with:
           folder: ${{ steps.build.outputs.repository }}
           target-folder: repo
           single-commit: true
+        
