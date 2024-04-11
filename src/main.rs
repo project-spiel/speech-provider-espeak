@@ -4,6 +4,8 @@ use inotify::{Inotify, WatchMask};
 use lazy_static::lazy_static;
 use speechprovider::*;
 use std::collections::HashSet;
+use std::env::current_exe;
+use std::process::exit;
 use std::ffi::{c_void, CStr, CString};
 use std::future::pending;
 use std::os::fd::IntoRawFd;
@@ -69,6 +71,33 @@ async fn observe_voices_changed(conn: Connection) {
                     .await
             })
             .unwrap();
+        }
+    });
+}
+
+fn observe_uninstall() {
+    thread::spawn(move || {
+        let me = current_exe().unwrap();
+        let mut inotify = Inotify::init().expect("Error while initializing inotify instance");
+
+        // Watch for modify and close events.
+        inotify
+            .watches()
+            .add(
+                me,
+                WatchMask::ALL_EVENTS,
+            )
+            .expect("Failed to add file watch");
+
+        let mut buffer = [0; 1024];
+
+        loop {
+            inotify
+                .read_events_blocking(&mut buffer)
+                .expect("Error while reading events");
+
+            // Our own executable is gone, we got uninstalled!
+            exit(1);
         }
     });
 }
@@ -364,6 +393,8 @@ async fn main() -> Result<()> {
         .await?;
 
     observe_voices_changed(conn).await;
+
+    observe_uninstall();
 
     pending::<()>().await;
 
