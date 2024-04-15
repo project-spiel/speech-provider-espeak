@@ -14,7 +14,7 @@ Install the eSpeak Provider:
 flatpak install org.espeak.Speech.Provider
 ```
 
-To voices available to install:
+To list voices available to install:
 ```sh
 flatpak remote-ls espeak
 ```
