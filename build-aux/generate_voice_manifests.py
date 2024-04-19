@@ -36,17 +36,15 @@ MANIFEST_TEMPLATE = '''{{
 response = urllib.request.urlopen('https://api.github.com/repos/espeak-ng/espeak-ng/git/trees/1.51.1?recursive=1')
 data = json.load(response)
 
-build_cmds = []
+p = pathlib.Path("_voices/")
+p.mkdir(parents=True, exist_ok=True)
+
 f = filter(lambda d: d["path"].startswith("espeak-ng-data/voices/!v/"), data["tree"])
 for obj in f:
   name = pathlib.Path(obj["path"]).name
   escaped_name = urllib.parse.quote(name.replace(" ", "_"))
-  manifest = f"voices/org.espeak.Speech.Provider.Voice.{escaped_name}.json"
+  manifest = f"_voices/org.espeak.Speech.Provider.Voice.{escaped_name}.json"
   mf = open(manifest, "w")
   mf.write(MANIFEST_TEMPLATE.format(name=name, escaped_name=escaped_name))
   mf.close()
-  build_cmds.append(f'flatpak-builder --force-clean --repo=repo build-dir "{manifest}"')
-
-print("#!/bin/sh")
-print("# Voice extension build script")
-print(' &&\n'.join(build_cmds))
+  print(manifest)
