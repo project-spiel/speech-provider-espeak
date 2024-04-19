@@ -6,7 +6,7 @@ This is a Spiel speech provider that features the very capable eSpeak-NG engine.
 
 Add the Flatpak repository:
 ```sh
-flatpak remote-add --user espeak https://project-spiel.org/speech-provider-espeak/speech-provider-espeak.flatpakrepo
+flatpak remote-add --user espeak https://project-spiel.org/spiel-repo.flatpakrepo
 ```
 
 Install the eSpeak Provider:
