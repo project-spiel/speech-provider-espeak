@@ -86,5 +86,6 @@ jobs:
           git config --global user.name "Spiel Robot"
           git add repo
           git commit -m "Updated eSpeak-NG packages"
+          git pull --rebase
           git push -f origin gh-pages
         
