@@ -5,11 +5,11 @@ use lazy_static::lazy_static;
 use speechprovider::*;
 use std::collections::HashSet;
 use std::env::current_exe;
-use std::process::exit;
 use std::ffi::{c_void, CStr, CString};
 use std::future::pending;
 use std::os::fd::IntoRawFd;
 use std::os::raw::{c_int, c_short};
+use std::process::exit;
 use std::ptr::{addr_of_mut, null, null_mut};
 use std::sync::{Mutex, MutexGuard};
 use std::thread;
@@ -83,10 +83,7 @@ fn observe_uninstall() {
         // Watch for modify and close events.
         inotify
             .watches()
-            .add(
-                me,
-                WatchMask::ALL_EVENTS,
-            )
+            .add(me, WatchMask::ALL_EVENTS)
             .expect("Failed to add file watch");
 
         let mut buffer = [0; 1024];
@@ -182,6 +179,7 @@ extern "C" fn synth_callback(
 
     let mut events_copy = events.clone();
     let sample_rate = unsafe { espeak_ng_GetSampleRate() } as u32;
+    let is_mbrola = sample_rate == 16000;
     while unsafe { (*events_copy).type_ != espeak_EVENT_TYPE_espeakEVENT_LIST_TERMINATED } {
         let text_position: usize = unsafe { (*events_copy).text_position.try_into().unwrap() };
         let length: usize = unsafe { (*events_copy).length.try_into().unwrap() };
@@ -196,24 +194,29 @@ extern "C" fn synth_callback(
             _ => None,
         };
 
-        if let Some((evt_type, start, end)) = evt {
-            let audio_position: u32 = unsafe { (*events_copy).audio_position.try_into().unwrap() };
-            let mut at_byte: usize = (audio_position * sample_rate / 1000 * 2)
-                .try_into()
-                .unwrap();
-            at_byte = at_byte.saturating_sub(stream_writer.bytes_sent);
+        if !is_mbrola {
+            if let Some((evt_type, start, end)) = evt {
+                let audio_position: u32 =
+                    unsafe { (*events_copy).audio_position.try_into().unwrap() };
+                let mut at_byte: usize = (audio_position * sample_rate / 1000 * 2)
+                    .try_into()
+                    .unwrap();
+                at_byte = at_byte.saturating_sub(stream_writer.bytes_sent);
 
-            let wav_slice_to_send = &wav_slice[bytes_sent..at_byte];
-            if !wav_slice_to_send.is_empty() {
-                stream_writer.send_audio(wav_slice_to_send);
-                bytes_sent = at_byte;
+                if at_byte > 0 {
+                    let wav_slice_to_send = &wav_slice[bytes_sent..at_byte];
+                    if !wav_slice_to_send.is_empty() {
+                        stream_writer.send_audio(wav_slice_to_send);
+                        bytes_sent = at_byte;
+                    }
+                }
+                stream_writer.send_event(
+                    evt_type,
+                    start.saturating_sub(1) as u32,
+                    end.saturating_sub(1) as u32,
+                    "",
+                );
             }
-            stream_writer.send_event(
-                evt_type,
-                start.saturating_sub(1) as u32,
-                end.saturating_sub(1) as u32,
-                "",
-            );
         }
 
         events_copy = events_copy.wrapping_add(1);
@@ -278,9 +281,8 @@ impl Speaker {
         let mut langs = langs_hash.into_iter().collect::<Vec<String>>();
         langs.sort();
 
-        let features = VoiceFeature::EVENTS_WORD
+        let mut features = VoiceFeature::EVENTS_WORD
             | VoiceFeature::EVENTS_SENTENCE
-            | VoiceFeature::EVENTS_SSML_MARK
             | VoiceFeature::SSML_SAY_AS_TELEPHONE
             | VoiceFeature::SSML_SAY_AS_CHARACTERS
             | VoiceFeature::SSML_SAY_AS_CHARACTERS_GLYPHS
@@ -291,12 +293,45 @@ impl Speaker {
             | VoiceFeature::SSML_SENTENCE_PARAGRAPH;
 
         let mut voice = empty_voice();
-        let c_lang = CString::new("variant").unwrap();
+        let mut c_lang = CString::new("variant").unwrap();
         voice.languages = c_lang.as_ptr();
 
-        let sample_rate = unsafe { espeak_ng_GetSampleRate() } as u32;
+        let mut sample_rate = unsafe { espeak_ng_GetSampleRate() } as u32;
         let mut voices = Vec::new();
         voice_arr = unsafe { espeak_ListVoices(addr_of_mut!(voice)) };
+        while unsafe { !(*voice_arr).is_null() } {
+            let voice = unsafe { **voice_arr };
+            if !voice.name.is_null() && !voice.identifier.is_null() {
+                let name_cstr = unsafe { CStr::from_ptr(voice.name) };
+                let id_cstr = unsafe { CStr::from_ptr(voice.identifier) };
+                let audio_format =
+                    format!("audio/x-spiel,format=S16LE,channels=1,rate={sample_rate}");
+                voices.push((
+                    String::from(name_cstr.to_str().unwrap()),
+                    String::from(id_cstr.to_str().unwrap().trim_start_matches("!v/")),
+                    audio_format,
+                    features.bits() as u64,
+                    langs.clone(),
+                ));
+            }
+            voice_arr = voice_arr.wrapping_add(1);
+        }
+
+        features = VoiceFeature::SSML_SAY_AS_TELEPHONE
+        | VoiceFeature::SSML_SAY_AS_CHARACTERS
+        | VoiceFeature::SSML_SAY_AS_CHARACTERS_GLYPHS
+        | VoiceFeature::SSML_BREAK
+        | VoiceFeature::SSML_SUB
+        | VoiceFeature::SSML_EMPHASIS
+        | VoiceFeature::SSML_PROSODY
+        | VoiceFeature::SSML_SENTENCE_PARAGRAPH;
+
+        c_lang = CString::new("mb").unwrap();
+        voice.languages = c_lang.as_ptr();
+
+        voice_arr = unsafe { espeak_ListVoices(addr_of_mut!(voice)) };
+        // XXX: MBROLA voices are 16 hz.
+        sample_rate = 16000;
         while unsafe { !(*voice_arr).is_null() } {
             let voice = unsafe { **voice_arr };
             if !voice.name.is_null() && !voice.identifier.is_null() {
@@ -332,14 +367,16 @@ impl Speaker {
     ) {
         let utterance_cstr = CString::new(utterance).unwrap();
 
-        let voice_name = if language.is_empty() {
+        let voice_name = if voice_id.starts_with("mb/") {
+            String::from(voice_id)
+        } else if language.is_empty() {
             let default_voice_utf8 = &ESPEAKNG_DEFAULT_VOICE[..ESPEAKNG_DEFAULT_VOICE.len() - 1];
-            std::str::from_utf8(default_voice_utf8).unwrap()
+            let default_voice = std::str::from_utf8(default_voice_utf8).unwrap();
+            format!("{default_voice}+{voice_id}")
         } else {
-            language
+            format!("{language}+{voice_id}")
         };
 
-        let lang_and_id = format!("{voice_name}+{voice_id}");
         thread::spawn(move || {
             let position = 0u32;
             let position_type: espeak_POSITION_TYPE = 0;
@@ -352,7 +389,7 @@ impl Speaker {
             let mut stream_writer = StreamWriterWrapper::new(fd);
             let stream_writer_ptr = stream_writer.to_ptr();
 
-            let c_lang = CString::new(lang_and_id).unwrap();
+            let c_lang = CString::new(voice_name).unwrap();
 
             unsafe {
                 let _lock = ESPEAK_INIT.plock();

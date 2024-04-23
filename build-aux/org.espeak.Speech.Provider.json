@@ -18,11 +18,11 @@
   },
   "add-extensions": {
     "org.espeak.Speech.Provider.Voice": {
-        "merge-dirs": "voices",
-        "directory": "extensions",
-        "autodelete": true,
-        "subdirectories": true,
-        "no-autodownload": true
+      "merge-dirs": "voices;mbrola_data;mb",
+      "directory": "extensions",
+      "autodelete": true,
+      "subdirectories": true,
+      "no-autodownload": true
     }
   },
   "modules": [
@@ -52,7 +52,27 @@
         "ln -s /app/lib/libespeak-ng.a /app/lib/libespeak.a",
         "rm -rf /app/share/espeak-ng-data/voices/\\!v*",
         "install -d ${FLATPAK_DEST}/extensions/voices",
-        "ln -s ${FLATPAK_DEST}/extensions/voices /app/share/espeak-ng-data/voices/\\!v"
+        "ln -s ${FLATPAK_DEST}/extensions/voices /app/share/espeak-ng-data/voices/\\!v",
+        "rm -rf /app/share/espeak-ng-data/voices/mb",
+        "install -d ${FLATPAK_DEST}/extensions/mb",
+        "install -d ${FLATPAK_DEST}/extensions/mbrola_data",
+        "ln -s ${FLATPAK_DEST}/extensions/mb /app/share/espeak-ng-data/voices/mb",
+        "ln -s ${FLATPAK_DEST}/extensions/mbrola_data /app/share/espeak-ng-data/mbrola"
+      ]
+    },
+    {
+      "name": "mbrola",
+      "buildsystem": "simple",
+      "build-commands": [
+        "make",
+        "cp Bin/mbrola /app/bin"
+      ],
+      "sources": [
+        {
+          "type": "archive",
+          "url": "https://github.com/numediart/MBROLA/archive/refs/tags/3.3.tar.gz",
+          "sha256": "c01ded2c0a05667e6df2439c1c02b011a5df2bfdf49e24a524630686aea2b558"
+        }
       ]
     },
     {
