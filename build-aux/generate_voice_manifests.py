@@ -172,11 +172,11 @@ MBROLA_FILES = [
   ['vz1', '63e0a5fa2c32f682e89e27a48633e536e5ebd211c9680021c95839e3c752612a']
 ]
 
-response = urllib.request.urlopen('https://api.github.com/repos/numediart/MBROLA-voices/git/trees/master?recursive=1')
-data = json.load(response)
-
-f = filter(lambda d: d["path"].startswith("espeak-ng-data/voices/!v/"), data["tree"])
+f = filter(lambda d: d["path"].startswith("espeak-ng-data/voices/mb/"), data["tree"])
+available_mb_voices = [pathlib.Path(mb["path"]).name for mb in f]
 for (name, checksum) in MBROLA_FILES:
+  if f"mb-{name}" not in available_mb_voices:
+    continue
   manifest = f"_voices/org.espeak.Speech.Provider.Voice.mbrola_{name}.json"
   mf = open(manifest, "w")
   mf.write(MBROLA_MANIFEST_TEMPLATE.format(name=name, checksum=checksum))
