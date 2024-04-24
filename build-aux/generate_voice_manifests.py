@@ -3,6 +3,29 @@ import json
 import urllib.request
 import urllib.parse
 
+METAINFO_TEMPLATE = '''<?xml version=\\"1.0\\" encoding=\\"UTF-8\\"?>
+<component type=\\"addon\\">
+  <id>org.espeak.Speech.Provider.Voice.{escaped_name}</id>
+
+  <name>{name}</name>
+  <summary>The {name} voice for eSpeak</summary>
+
+  <metadata_license>MIT</metadata_license>
+  <project_license>LGPL-3.0-or-later</project_license>
+
+  <extends>
+    <id>org.espeak.Speech.Provider</id>
+  </extends>
+
+  <description>
+    <p>
+      The {name} voice for eSpeak
+    </p>
+  </description>
+
+</component>
+'''
+
 MANIFEST_TEMPLATE = '''{{
   "app-id": "org.espeak.Speech.Provider.Voice.{escaped_name}",
   "runtime": "org.espeak.Speech.Provider",
@@ -14,7 +37,8 @@ MANIFEST_TEMPLATE = '''{{
       "name": "espeak-ng",
       "buildsystem": "simple",
       "build-commands": [
-        "install -D -m644 \\"espeak-ng-data/voices/\\!v/{name}\\" \\"${{FLATPAK_DEST}}/voices/{name}\\""
+        "install -D -m644 \\"espeak-ng-data/voices/\\!v/{name}\\" \\"${{FLATPAK_DEST}}/voices/{name}\\"",
+        "install -Dm644 org.espeak.Speech.Provider.Voice.{escaped_name}.metainfo.xml -t ${{FLATPAK_DEST}}/share/metainfo/"
       ],
       "sources": [
         {{
@@ -26,6 +50,11 @@ MANIFEST_TEMPLATE = '''{{
             "type": "git",
             "tag-pattern": "^([\\\\d.]+)$"
           }}
+        }},
+        {{
+          "type": "inline",
+          "contents": "{metainfo}",
+          "dest-filename": "org.espeak.Speech.Provider.Voice.{escaped_name}.metainfo.xml"
         }}
       ]
     }}
@@ -43,9 +72,10 @@ f = filter(lambda d: d["path"].startswith("espeak-ng-data/voices/!v/"), data["tr
 for obj in f:
   name = pathlib.Path(obj["path"]).name
   escaped_name = urllib.parse.quote(name.replace(" ", "_"))
+  metainfo = METAINFO_TEMPLATE.format(name=name, escaped_name=escaped_name)
   manifest = f"_voices/org.espeak.Speech.Provider.Voice.{escaped_name}.json"
   mf = open(manifest, "w")
-  mf.write(MANIFEST_TEMPLATE.format(name=name, escaped_name=escaped_name))
+  mf.write(MANIFEST_TEMPLATE.format(name=name, escaped_name=escaped_name, metainfo=metainfo))
   mf.close()
   print(manifest)
 
@@ -87,6 +117,11 @@ MBROLA_MANIFEST_TEMPLATE = '''{{
           "type": "file",
           "url": "https://github.com/numediart/MBROLA-voices/raw/master/data/{name}/{name}",
           "sha256": "{checksum}"
+        }},
+        {{
+          "type": "inline",
+          "contents": "{metainfo}",
+          "dest-filename": "org.espeak.Speech.Provider.Voice.{name}.metainfo.xml"
         }}
       ]
     }}
@@ -177,8 +212,9 @@ available_mb_voices = [pathlib.Path(mb["path"]).name for mb in f]
 for (name, checksum) in MBROLA_FILES:
   if f"mb-{name}" not in available_mb_voices:
     continue
+  metainfo = METAINFO_TEMPLATE.format(name=name, escaped_name=name)
   manifest = f"_voices/org.espeak.Speech.Provider.Voice.mbrola_{name}.json"
   mf = open(manifest, "w")
-  mf.write(MBROLA_MANIFEST_TEMPLATE.format(name=name, checksum=checksum))
+  mf.write(MBROLA_MANIFEST_TEMPLATE.format(name=name, checksum=checksum, metainfo=metainfo))
   mf.close()
   print(manifest)
