@@ -12,7 +12,6 @@ version = meson.project_version()
 prefix = get_option('prefix')
 bindir = prefix / get_option('bindir')
 localedir = prefix / get_option('localedir')
-
 datadir = prefix / get_option('datadir')
 pkgdatadir = datadir / meson.project_name()
 
@@ -35,4 +34,9 @@ configure_file(
 install_data(
   meson.current_build_dir() / 'org.espeak.Speech.Provider.service',
   install_dir: get_option('datadir') / 'dbus-1/services',
+)
+
+install_data(
+  'data' / 'org.espeak.Speech.Provider.metainfo.xml',
+  install_dir: get_option('datadir') / 'metainfo',
 )
