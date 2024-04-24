@@ -13,9 +13,7 @@
       Speech provider for eSpeak-NG speech engine
     </p>
   </description>
-  
-  <icon type="stock">espeak-ngspeechprovider</icon>
-  
+    
   <categories>
     <category>AudioVideo</category>
     <category>Player</category>
