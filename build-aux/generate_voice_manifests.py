@@ -2,6 +2,7 @@ import pathlib
 import json
 import urllib.request
 import urllib.parse
+from collections import OrderedDict
 
 METAINFO_TEMPLATE = '''<?xml version=\\"1.0\\" encoding=\\"UTF-8\\"?>
 <component type=\\"addon\\">
@@ -26,108 +27,46 @@ METAINFO_TEMPLATE = '''<?xml version=\\"1.0\\" encoding=\\"UTF-8\\"?>
 </component>
 '''
 
-MANIFEST_TEMPLATE = '''{{
-  "app-id": "org.espeak.Speech.Provider.Voice.{escaped_name}",
+MANIFEST_TEMPLATE = '''{
+  "app-id": "",
   "runtime": "org.espeak.Speech.Provider",
   "runtime-version": "master",
   "sdk": "org.freedesktop.Sdk//23.08",
   "build-extension": true,
   "modules": [
-    {{
+    {
       "name": "espeak-ng",
       "buildsystem": "simple",
-      "build-commands": [
-        "install -D -m644 \\"espeak-ng-data/voices/\\!v/{name}\\" \\"${{FLATPAK_DEST}}/voices/{name}\\"",
-        "install -Dm644 org.espeak.Speech.Provider.Voice.{escaped_name}.metainfo.xml -t ${{FLATPAK_DEST}}/share/metainfo/"
-      ],
+      "build-commands": [],
       "sources": [
-        {{
+        {
           "type": "git",
           "url": "https://github.com/espeak-ng/espeak-ng.git",
           "tag": "1.51.1",
           "commit": "34762a2b9621d3643e67a00642984c21f0626bdc",
-          "x-checker-data": {{
+          "x-checker-data": {
             "type": "git",
             "tag-pattern": "^([\\\\d.]+)$"
-          }}
-        }},
-        {{
-          "type": "inline",
-          "contents": "{metainfo}",
-          "dest-filename": "org.espeak.Speech.Provider.Voice.{escaped_name}.metainfo.xml"
-        }}
+          }
+        }
       ]
-    }}
+    }
   ]
-}}
+}
 '''
 
-response = urllib.request.urlopen('https://api.github.com/repos/espeak-ng/espeak-ng/git/trees/1.51.1?recursive=1')
-data = json.load(response)
-
-p = pathlib.Path("_voices/")
-p.mkdir(parents=True, exist_ok=True)
-
-f = filter(lambda d: d["path"].startswith("espeak-ng-data/voices/!v/"), data["tree"])
-for obj in f:
-  name = pathlib.Path(obj["path"]).name
-  escaped_name = urllib.parse.quote(name.replace(" ", "_"))
-  metainfo = METAINFO_TEMPLATE.format(name=name, escaped_name=escaped_name)
-  manifest = f"_voices/org.espeak.Speech.Provider.Voice.{escaped_name}.json"
-  mf = open(manifest, "w")
-  mf.write(MANIFEST_TEMPLATE.format(name=name, escaped_name=escaped_name, metainfo=metainfo))
-  mf.close()
-  print(manifest)
-
-
-MBROLA_MANIFEST_TEMPLATE = '''{{
-  "app-id": "org.espeak.Speech.Provider.Voice.mbrola_{name}",
-  "runtime": "org.espeak.Speech.Provider",
-  "runtime-version": "master",
-  "sdk": "org.freedesktop.Sdk//23.08",
-  "build-extension": true,
-  "modules": [
-    {{
-      "name": "espeak-ng",
-      "buildsystem": "simple",
-      "build-commands": [
-        "install -D -m644 \\"espeak-ng-data/voices/mb/mb-{name}\\" \\"${{FLATPAK_DEST}}/mb/{name}\\""
-      ],
-      "sources": [
-        {{
-          "type": "git",
-          "url": "https://github.com/espeak-ng/espeak-ng.git",
-          "tag": "1.51.1",
-          "commit": "34762a2b9621d3643e67a00642984c21f0626bdc",
-          "x-checker-data": {{
-            "type": "git",
-            "tag-pattern": "^([\\\\d.]+)$"
-          }}
-        }}
-      ]
-    }},
-    {{
-      "name": "mbrola-data",
-      "buildsystem": "simple",
-      "build-commands": [
-        "install -D -m644 \\"{name}\\" \\"${{FLATPAK_DEST}}/mbrola_data/{name}\\""
-      ],
-      "sources": [
-        {{
-          "type": "file",
-          "url": "https://github.com/numediart/MBROLA-voices/raw/master/data/{name}/{name}",
-          "sha256": "{checksum}"
-        }},
-        {{
-          "type": "inline",
-          "contents": "{metainfo}",
-          "dest-filename": "org.espeak.Speech.Provider.Voice.{name}.metainfo.xml"
-        }}
-      ]
-    }}
+MBROLA_DATA_TEMPLATE = '''{
+  "name": "mbrola-data",
+  "buildsystem": "simple",
+  "build-commands": [],
+  "sources": [
+    {
+      "type": "file",
+      "url": "",
+      "sha256": ""
+    }
   ]
-}}
-'''
+}'''
 
 MBROLA_FILES = [
   ['af1', '9760046e3f2b007f8c0279d321e5e934afaa8cfb7ec075241108a0e8f3730c7c'],
@@ -207,14 +146,59 @@ MBROLA_FILES = [
   ['vz1', '63e0a5fa2c32f682e89e27a48633e536e5ebd211c9680021c95839e3c752612a']
 ]
 
+def create_manifest(name, mbrola_data_checksum=None):
+  escaped_name = urllib.parse.quote(name.replace(" ", "_"))
+  if mbrola_data_checksum:
+    escaped_name = f"mbrola_{escaped_name}"
+  metainfo = METAINFO_TEMPLATE.format(name=name, escaped_name=escaped_name)
+
+  manifest = json.loads(MANIFEST_TEMPLATE, object_pairs_hook=OrderedDict)
+  manifest["app-id"] = f"org.espeak.Speech.Provider.Voice.{escaped_name}"
+  espeak_module = manifest["modules"][0]
+  espeak_module["build-commands"] = [
+    f"install -Dm644 org.espeak.Speech.Provider.Voice.{escaped_name}.metainfo.xml -t ${{FLATPAK_DEST}}/share/metainfo/"
+  ]
+
+  if mbrola_data_checksum:
+    espeak_module["build-commands"].append(f"install -D -m644 \"espeak-ng-data/voices/mb/mb-{name}\" \"${{FLATPAK_DEST}}/mb/{name}\"")
+  else:
+    espeak_module["build-commands"].append(f"install -D -m644 \"espeak-ng-data/voices/\\!v/{name}\" \"${{FLATPAK_DEST}}/voices/{name}\"")
+
+  espeak_module["sources"].append(
+        {
+          "type": "inline",
+          "contents": metainfo,
+          "dest-filename": f"org.espeak.Speech.Provider.Voice.{escaped_name}.metainfo.xml"
+        }
+  )
+
+  if mbrola_data_checksum:
+    mbrola_module = json.loads(MBROLA_DATA_TEMPLATE, object_pairs_hook=OrderedDict)
+    mbrola_module["build-commands"].append(f"install -D -m644 \"{name}\" \"${{FLATPAK_DEST}}/mbrola_data/{name}\"")
+    mbrola_module["sources"][0]["url"] = f"https://github.com/numediart/MBROLA-voices/raw/master/data/{name}/{name}"
+    mbrola_module["sources"][0]["sha256"] = mbrola_data_checksum
+    manifest["modules"].append(mbrola_module)
+
+  fname = f"_voices/org.espeak.Speech.Provider.Voice.{escaped_name}.json"
+  mf = open(fname, "w")
+  mf.write(json.dumps(manifest, indent=2).replace("\\!", "!"))
+  mf.close()
+  print(fname)
+
+response = urllib.request.urlopen('https://api.github.com/repos/espeak-ng/espeak-ng/git/trees/1.51.1?recursive=1')
+data = json.load(response)
+
+p = pathlib.Path("_voices/")
+p.mkdir(parents=True, exist_ok=True)
+
+f = filter(lambda d: d["path"].startswith("espeak-ng-data/voices/!v/"), data["tree"])
+for obj in f:
+  name = pathlib.Path(obj["path"]).name
+  create_manifest(name)
+
 f = filter(lambda d: d["path"].startswith("espeak-ng-data/voices/mb/"), data["tree"])
 available_mb_voices = [pathlib.Path(mb["path"]).name for mb in f]
 for (name, checksum) in MBROLA_FILES:
   if f"mb-{name}" not in available_mb_voices:
     continue
-  metainfo = METAINFO_TEMPLATE.format(name=name, escaped_name=name)
-  manifest = f"_voices/org.espeak.Speech.Provider.Voice.mbrola_{name}.json"
-  mf = open(manifest, "w")
-  mf.write(MBROLA_MANIFEST_TEMPLATE.format(name=name, checksum=checksum, metainfo=metainfo))
-  mf.close()
-  print(manifest)
+  create_manifest(name, checksum)
