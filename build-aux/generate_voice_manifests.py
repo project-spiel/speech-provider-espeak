@@ -4,8 +4,8 @@ import urllib.request
 import urllib.parse
 from collections import OrderedDict
 
-METAINFO_TEMPLATE = '''<?xml version=\\"1.0\\" encoding=\\"UTF-8\\"?>
-<component type=\\"addon\\">
+METAINFO_TEMPLATE = '''<?xml version="1.0" encoding="UTF-8"?>
+<component type="addon">
   <id>org.espeak.Speech.Provider.Voice.{escaped_name}</id>
 
   <name>{name}</name>
