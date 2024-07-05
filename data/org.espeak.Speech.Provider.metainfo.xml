@@ -22,4 +22,8 @@
   <provides>
     <binary>speech-provider-espeak</binary>
   </provides>
+
+  <custom>
+    <value key="Spiel:provider_name">eSpeak-NG</value>
+  </custom>
 </component>
