@@ -3,7 +3,7 @@
   <id>org.espeak.Speech.Provider</id>
   
   <name>eSpeak-NG Speech Provider</name>
-  <summary>Speech provider for eSpeak-NG speech engine!</summary>
+  <summary>Speech provider for eSpeak-NG speech engine</summary>
   
   <metadata_license>MIT</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
@@ -24,6 +24,6 @@
   </provides>
 
   <custom>
-    <value key="Spiel:provider_name">eSpeak-NG</value>
+    <value key="Spiel::provider_name">eSpeak-NG</value>
   </custom>
 </component>
