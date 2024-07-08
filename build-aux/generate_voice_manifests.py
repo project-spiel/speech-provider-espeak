@@ -18,6 +18,10 @@ METAINFO_TEMPLATE = '''<?xml version="1.0" encoding="UTF-8"?>
     <id>org.espeak.Speech.Provider</id>
   </extends>
 
+  <requires>
+    <id>org.espeak.Speech.Provider</id>
+  </requires>
+
   <description>
     <p>
       The {name} voice for eSpeak

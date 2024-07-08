@@ -2,8 +2,8 @@
 <component type="generic">
   <id>org.espeak.Speech.Provider</id>
   
-  <name>eSpeak-NG Speech Provider</name>
-  <summary>Speech provider for eSpeak-NG speech engine</summary>
+  <name>eSpeak-NG</name>
+  <summary>Speech provider for the eSpeak-NG speech engine</summary>
   
   <metadata_license>MIT</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
@@ -21,6 +21,7 @@
   
   <provides>
     <binary>speech-provider-espeak</binary>
+    <dbus type="session">org.espeak.Speech.Provider</dbus>
   </provides>
 
   <custom>
