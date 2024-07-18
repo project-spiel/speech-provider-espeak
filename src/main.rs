@@ -15,6 +15,7 @@ use std::sync::{Mutex, MutexGuard};
 use std::thread;
 use zbus::{dbus_interface, Connection, ConnectionBuilder, MessageHeader, Result, SignalContext};
 use zvariant::OwnedFd;
+use oxilangtag::LanguageTag;
 
 const NORMAL_RATE: f32 = 175.0;
 
@@ -271,8 +272,12 @@ impl Speaker {
                     // skip priority byte
                     langs_ptr = langs_ptr.wrapping_add(1);
                     let lang_cstr = unsafe { CStr::from_ptr(langs_ptr) };
-                    let name = String::from(lang_cstr.to_str().unwrap());
+                    let mut name = String::from(lang_cstr.to_str().unwrap());
                     langs_ptr = langs_ptr.wrapping_add(name.bytes().count() + 1);
+                    name = String::from(match LanguageTag::parse_and_normalize(&name) {
+                        Ok(lang_tag) => String::from(lang_tag.as_str()),
+                        Err(_) => name
+                    });
                     langs_hash.insert(name);
                 }
             }

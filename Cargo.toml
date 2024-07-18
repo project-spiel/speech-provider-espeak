@@ -17,3 +17,4 @@ libc = "0.2"
 bitflags = "2.4.1"
 speechprovider = { git = "https://github.com/project-spiel/rust-bindings.git", package = "speechprovider" }
 inotify = "0.10.2"
+oxilangtag = "0.1.5"
