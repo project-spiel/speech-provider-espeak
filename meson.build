@@ -1,7 +1,7 @@
 project('speech-provider-espeak',
         'rust',
         version: files('VERSION'),
-        license: 'GPL3',
+        license: 'GPL-3.0-or-later',
 	meson_version : '>= 0.58')
 
 dependency('glib-2.0', version: '>= 2.56')
