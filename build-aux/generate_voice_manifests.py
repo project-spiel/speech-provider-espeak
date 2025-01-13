@@ -204,7 +204,7 @@ def create_manifest(name, mbrola_data_checksum=None, langs=LANGUAGES):
 
   fname = f"_voices/org.espeak.Speech.Provider.Voice.{escaped_name}.json"
   mf = open(fname, "w")
-  mf.write(json.dumps(manifest, indent=2).replace("\\!", "!"))
+  mf.write(json.dumps(manifest, indent=2).replace("\\\\!", "!"))
   mf.close()
   print(fname)
 
